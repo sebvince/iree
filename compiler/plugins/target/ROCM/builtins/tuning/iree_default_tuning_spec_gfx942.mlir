@@ -804,14 +804,18 @@ util.func private @pingpong_large_f8_expanded(%lhs_base: !exp_in_ty_f8, %rhs_bas
 
       // Global loads of lhs.
       %lhs_block = tensor.extract_slice %lhs [0, 0, %i] [1, 256, 128] [1, 1, 1] : !exp_in_ty_f8 to !exp_block_in_f8
+
       %lhs_thread_0 = tensor.extract_slice %lhs_block [0, %glb0, %gko] [1, 1, 16] [1, 1, 1] : !exp_block_in_f8 to tensor<1x1x16xf8E4M3FNUZ>
       %lhs_vec_local_0 = vector.transfer_read %lhs_thread_0 [%c0, %c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x1x16xf8E4M3FNUZ>, vector<1x16xf8E4M3FNUZ>
+
       %lhs_thread_1 = tensor.extract_slice %lhs_block [0, %glb1, %gko] [1, 1, 16] [1, 1, 1] : !exp_block_in_f8 to tensor<1x1x16xf8E4M3FNUZ>
       %lhs_vec_local_1 = vector.transfer_read %lhs_thread_1 [%c0, %c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x1x16xf8E4M3FNUZ>, vector<1x16xf8E4M3FNUZ>
-      %lhs_thread_2 = tensor.extract_slice %lhs_block [0, %glb2, %gko] [1, 1, 16] [1, 1, 1] : !exp_block_in_f8 to tensor<1x1x16xf8E4M3FNUZ>
-      %lhs_vec_local_2 = vector.transfer_read %lhs_thread_2 [%c0, %c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x1x16xf8E4M3FNUZ>, vector<1x16xf8E4M3FNUZ>
-      %lhs_thread_3 = tensor.extract_slice %lhs_block [0, %glb3, %gko] [1, 1, 16] [1, 1, 1] : !exp_block_in_f8 to tensor<1x1x16xf8E4M3FNUZ>
-      %lhs_vec_local_3 = vector.transfer_read %lhs_thread_3 [%c0, %c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x1x16xf8E4M3FNUZ>, vector<1x16xf8E4M3FNUZ>
+
+      // Global loads of rhs.
+      %rhs_block = tensor.extract_slice %rhs [0, %i] [256, 128] [1, 1] : !in_ty_f8 to !block_in_f8
+      %rhs_thread_0 = tensor.extract_slice %rhs_block [%glb0, %gko] [1, 16] [1, 1] : !block_in_f8 to tensor<1x16xf8E4M3FNUZ>
+      %rhs_vec_local_0 = vector.transfer_read %rhs_thread_0 [%c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x16xf8E4M3FNUZ>, vector<1x16xf8E4M3FNUZ>
+
 
       %lhs_vec_0 = vector.transfer_read %lhs_shared_expand[%m_outer_id, %ids#3, %c0, %inner_id], %cst {in_bounds = [true, true, true, true]} : !shared_exp_f8, vector<8x1x1x8xf8E4M3FNUZ>
       %rhs_vec_0 = vector.transfer_read %rhs_shared_expand[%n_outer_id, %ids#3, %c0, %inner_id], %cst {in_bounds = [true, true, true, true]} : !shared_exp_f8, vector<4x1x1x8xf8E4M3FNUZ>
@@ -830,14 +834,15 @@ util.func private @pingpong_large_f8_expanded(%lhs_base: !exp_in_ty_f8, %rhs_bas
       gpu.barrier
       rocdl.sched.barrier 0
 
-      // Global loads of rhs.
-      %rhs_block = tensor.extract_slice %rhs [0, %i] [256, 128] [1, 1] : !in_ty_f8 to !block_in_f8
-      %rhs_thread_0 = tensor.extract_slice %rhs_block [%glb0, %gko] [1, 16] [1, 1] : !block_in_f8 to tensor<1x16xf8E4M3FNUZ>
-      %rhs_vec_local_0 = vector.transfer_read %rhs_thread_0 [%c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x16xf8E4M3FNUZ>, vector<1x16xf8E4M3FNUZ>
+      
+
+    
       %rhs_thread_1 = tensor.extract_slice %rhs_block [%glb1, %gko] [1, 16] [1, 1] : !block_in_f8 to tensor<1x16xf8E4M3FNUZ>
       %rhs_vec_local_1 = vector.transfer_read %rhs_thread_1 [%c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x16xf8E4M3FNUZ>, vector<1x16xf8E4M3FNUZ>
+
       %rhs_thread_2 = tensor.extract_slice %rhs_block [%glb2, %gko] [1, 16] [1, 1] : !block_in_f8 to tensor<1x16xf8E4M3FNUZ>
       %rhs_vec_local_2 = vector.transfer_read %rhs_thread_2 [%c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x16xf8E4M3FNUZ>, vector<1x16xf8E4M3FNUZ>
+      
       %rhs_thread_3 = tensor.extract_slice %rhs_block [%glb3, %gko] [1, 16] [1, 1] : !block_in_f8 to tensor<1x16xf8E4M3FNUZ>
       %rhs_vec_local_3 = vector.transfer_read %rhs_thread_3 [%c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x16xf8E4M3FNUZ>, vector<1x16xf8E4M3FNUZ>
 
@@ -858,6 +863,14 @@ util.func private @pingpong_large_f8_expanded(%lhs_base: !exp_in_ty_f8, %rhs_bas
       gpu.barrier
       rocdl.sched.barrier 0
 
+
+      %lhs_thread_2 = tensor.extract_slice %lhs_block [0, %glb2, %gko] [1, 1, 16] [1, 1, 1] : !exp_block_in_f8 to tensor<1x1x16xf8E4M3FNUZ>
+      %lhs_vec_local_2 = vector.transfer_read %lhs_thread_2 [%c0, %c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x1x16xf8E4M3FNUZ>, vector<1x16xf8E4M3FNUZ>
+      
+      %lhs_thread_3 = tensor.extract_slice %lhs_block [0, %glb3, %gko] [1, 1, 16] [1, 1, 1] : !exp_block_in_f8 to tensor<1x1x16xf8E4M3FNUZ>
+      %lhs_vec_local_3 = vector.transfer_read %lhs_thread_3 [%c0, %c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x1x16xf8E4M3FNUZ>, vector<1x16xf8E4M3FNUZ>
+
+
       %lhs_vec_2 = vector.transfer_read %lhs_shared_expand[%m_outer_id, %ids#3, %c2, %inner_id], %cst {in_bounds = [true, true, true, true]} : !shared_exp_f8, vector<8x1x1x8xf8E4M3FNUZ>
       %rhs_vec_2 = vector.transfer_read %rhs_shared_expand[%n_outer_id, %ids#3, %c2, %inner_id], %cst {in_bounds = [true, true, true, true]} : !shared_exp_f8, vector<4x1x1x8xf8E4M3FNUZ>
 
@@ -877,16 +890,16 @@ util.func private @pingpong_large_f8_expanded(%lhs_base: !exp_in_ty_f8, %rhs_bas
       rocdl.s.setprio 0
       gpu.barrier
       rocdl.sched.barrier 0
+      
+      vector.transfer_write %rhs_vec_local_0, %rhs_shared [%glb0, %gko] {in_bounds = [true, true]} : vector<1x16xf8E4M3FNUZ>, !shared_f8
+      vector.transfer_write %rhs_vec_local_1, %rhs_shared [%glb1, %gko] {in_bounds = [true, true]} : vector<1x16xf8E4M3FNUZ>, !shared_f8
+      vector.transfer_write %rhs_vec_local_2, %rhs_shared [%glb2, %gko] {in_bounds = [true, true]} : vector<1x16xf8E4M3FNUZ>, !shared_f8
+      vector.transfer_write %rhs_vec_local_3, %rhs_shared [%glb3, %gko] {in_bounds = [true, true]} : vector<1x16xf8E4M3FNUZ>, !shared_f8
 
       vector.transfer_write %lhs_vec_local_0, %lhs_shared [%glb0, %gko] {in_bounds = [true, true]} : vector<1x16xf8E4M3FNUZ>, !shared_f8
       vector.transfer_write %lhs_vec_local_1, %lhs_shared [%glb1, %gko] {in_bounds = [true, true]} : vector<1x16xf8E4M3FNUZ>, !shared_f8
       vector.transfer_write %lhs_vec_local_2, %lhs_shared [%glb2, %gko] {in_bounds = [true, true]} : vector<1x16xf8E4M3FNUZ>, !shared_f8
       vector.transfer_write %lhs_vec_local_3, %lhs_shared [%glb3, %gko] {in_bounds = [true, true]} : vector<1x16xf8E4M3FNUZ>, !shared_f8
-
-      vector.transfer_write %rhs_vec_local_0, %rhs_shared [%glb0, %gko] {in_bounds = [true, true]} : vector<1x16xf8E4M3FNUZ>, !shared_f8
-      vector.transfer_write %rhs_vec_local_1, %rhs_shared [%glb1, %gko] {in_bounds = [true, true]} : vector<1x16xf8E4M3FNUZ>, !shared_f8
-      vector.transfer_write %rhs_vec_local_2, %rhs_shared [%glb2, %gko] {in_bounds = [true, true]} : vector<1x16xf8E4M3FNUZ>, !shared_f8
-      vector.transfer_write %rhs_vec_local_3, %rhs_shared [%glb3, %gko] {in_bounds = [true, true]} : vector<1x16xf8E4M3FNUZ>, !shared_f8
 
       gpu.barrier
       rocdl.sched.barrier 0
