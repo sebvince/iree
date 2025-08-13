@@ -198,6 +198,8 @@ static LogicalResult canReorderWorkgroups(FunctionOpInterface funcOp) {
   SmallVector<int64_t> workgroupCounts = getStaticNumWorkgroups(funcOp);
   if (llvm::any_of(workgroupCounts, ShapedType::isDynamic))
     return failure();
+  // if (llvm::any_of(workgroupCounts, ShapedType::isDynamic))
+  //   return failure();
 
   // This is further restricted to 2D+ grids as we reorder along the X and Y
   // workgroup IDs.
@@ -418,11 +420,14 @@ void addGPUTileAndFusePassPipeline(OpPassManager &funcPassManager,
     funcPassManager.addPass(createGPUPadConvsPass());
     funcPassManager.addPass(createConvolutionToIGEMMPass());
   }
+    ReorderWorkgroupsStrategy reorderStrategy =
+      getReorderWorkgroupsStrategy(pipelineOptions.reorderStrategy);
+
   // TODO (nirvedhmeshram) : Can remove this pass after
   // https://github.com/iree-org/iree/issues/19546 is fixed.
   funcPassManager.addPass(createConvertAccGEMMToGEMMPass());
   tileAndDistributeToWorkgroup(funcPassManager, /*useForall=*/true,
-                               /*convertToDpsOptions=*/std::nullopt);
+                               /*convertToDpsOptions=*/std::nullopt, reorderStrategy);
 
   // Step 0. Apply any user annotated lowering strategies. This runs first as
   // steps 1 - 4 are essentially applying patterns based on the lowering config,
@@ -564,6 +569,10 @@ void addGPUTileAndFusePassPipeline(OpPassManager &funcPassManager,
   funcPassManager.addPass(IREE::GPU::createUnrollToIntrinsicsPass());
   funcPassManager.addPass(createCanonicalizerPass());
   funcPassManager.addPass(createCSEPass());
+
+ 
+  // funcPassManager.addPass(
+  //     createReorderWorkgroups(reorderStrategy, canReorderWorkgroups));
 
   // Step 9. Remaining post-bufferization optimizations/lowerings.
   funcPassManager.addPass(createPropagateDispatchSizeBoundsPass());

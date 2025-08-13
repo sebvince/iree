@@ -353,10 +353,10 @@ void TileAndDistributeToWorkgroupsUsingForallOpPass::runOnOperation() {
     if (transposeWorkgroup) {
       SmallVector<Attribute> mappingAttrs(forallOp.getMappingAttr().getValue());
       int64_t mappingSize = mappingAttrs.size();
-      if (areAllStaticLoopBounds(forallOp) && mappingSize >= 2) {
+      // if (areAllStaticLoopBounds(forallOp) && mappingSize >= 2) {
         std::swap(mappingAttrs[mappingSize - 1], mappingAttrs[mappingSize - 2]);
         forallOp.setMappingAttr(ArrayAttr::get(context, mappingAttrs));
-      }
+      // }
     }
   }
 
