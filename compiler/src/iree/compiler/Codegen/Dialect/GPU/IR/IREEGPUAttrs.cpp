@@ -1784,6 +1784,15 @@ std::optional<StringRef> LoweringConfigAttr::getLoweringStrategy() const {
   return std::nullopt;
 }
 
+constexpr StringLiteral kWorkgroupOrderingStrategyName = "workgroup_ordering_strategy";
+
+::mlir::iree_compiler::IREE::Codegen::WorkgroupReorderingAttrInterface LoweringConfigAttr::getWorkgroupOrderingStrategy() const {
+  if (auto attr = getAttributes().getAs<::mlir::iree_compiler::IREE::Codegen::WorkgroupReorderingAttrInterface>(kWorkgroupOrderingStrategyName)) {
+    return attr;
+  }
+  return nullptr;
+}
+
 //===----------------------------------------------------------------------===//
 // DerivedThreadConfigAttr
 //===----------------------------------------------------------------------===//
@@ -1876,6 +1885,8 @@ GPUPipelineOptionsAttr GPUPipelineOptionsAttr::get(
                    b.getBoolAttr(noReduceSharedMemoryBankConflicts),
                    b.getBoolAttr(useIgemmConvolution), strategyAttr);
 }
+
+
 
 //===----------------------------------------------------------------------===//
 // Attribute Registration
