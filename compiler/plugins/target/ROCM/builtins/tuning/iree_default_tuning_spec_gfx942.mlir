@@ -1840,7 +1840,9 @@ transform.named_sequence
   %config = transform.param.constant #iree_codegen.compilation_info<
     lowering_config = #iree_gpu.lowering_config<{
       workgroup = [256, 256, 0],
-      lowering_strategy = "cast_and_call_pingpong_matmul"}>,
+      lowering_strategy = "cast_and_call_pingpong_matmul",
+      workgroup_ordering_strategy = #iree_codegen.conditional_transpose<8,38>
+      }>,
     translation_info = #iree_codegen.translation_info<pipeline = LLVMGPUTileAndFuse
       workgroup_size = [512, 1, 1] subgroup_size = 64,
       // This strategy uses the maximum amount of possible shared memory on
@@ -2099,7 +2101,9 @@ transform.named_sequence
   %config = transform.param.constant #iree_codegen.compilation_info<
     lowering_config = #iree_gpu.lowering_config<{
       workgroup = [1, 256, 256, 0],
-      lowering_strategy = "cast_and_call_expanded_pingpong_matmul"}>,
+      lowering_strategy = "cast_and_call_expanded_pingpong_matmul",
+      workgroup_ordering_strategy = #iree_codegen.conditional_transpose<8,38>
+      }>,
     translation_info = #iree_codegen.translation_info<pipeline = LLVMGPUTileAndFuse
       workgroup_size = [512, 1, 1] subgroup_size = 64,
       // This strategy uses the maximum amount of possible shared memory on
