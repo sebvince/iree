@@ -1987,15 +1987,15 @@ SmallVector<Range> DynamicTransposeAttr::generateLoopBounds(
   SmallVector<OpFoldResult> lbs, ubs, steps;
   std::tie(lbs, ubs, steps) = getloopBounds(loopRanges, tileSizes);
   // We only support rank 2.
-  if (lbs.size() == 2) {
-    Value nbCusVal = b.create<arith::ConstantIndexOp>(loc, getNbCus());
-    Value nbXCDs = b.create<arith::ConstantIndexOp>(loc, getNbXcds());
-    Value cond = getCondition(b, loc, ubs, steps, nbXCDs, nbCusVal);
-    // Swap X & Y axis based on cond.
-    swapValuesOnCond(b, loc, cond, lbs);
-    swapValuesOnCond(b, loc, cond, ubs);
-    swapValuesOnCond(b, loc, cond, steps);
-  }
+  // if (lbs.size() == 2) {
+  //   Value nbCusVal = b.create<arith::ConstantIndexOp>(loc, getNbCus());
+  //   Value nbXCDs = b.create<arith::ConstantIndexOp>(loc, getNbXcds());
+  //   Value cond = getCondition(b, loc, ubs, steps, nbXCDs, nbCusVal);
+  //   // Swap X & Y axis based on cond.
+  //   swapValuesOnCond(b, loc, cond, lbs);
+  //   swapValuesOnCond(b, loc, cond, ubs);
+  //   swapValuesOnCond(b, loc, cond, steps);
+  // }
   SmallVector<Range> ranges;
   for (auto [lb, ub, step] : llvm::zip_equal(lbs, ubs, steps)) {
     ranges.push_back(Range{lb, ub, step});
@@ -2011,11 +2011,60 @@ SmallVector<Value> DynamicTransposeAttr::updateIds(
   SmallVector<Value> out;
   // We only support rank 2.
   if (lbs.size() == 2) {
-    Value nbCusVal = b.create<arith::ConstantIndexOp>(loc, getNbCus());
-    Value nbXCDs = b.create<arith::ConstantIndexOp>(loc, getNbXcds());
-    Value cond = getCondition(b, loc, ubs, steps, nbXCDs, nbCusVal);
-    out.push_back(b.create<mlir::arith::SelectOp>(loc, cond, ids[0], ids[1]));
-    out.push_back(b.create<mlir::arith::SelectOp>(loc, cond, ids[1], ids[0]));
+
+    Value valN = b.create<arith::ConstantIndexOp>(loc, 8);
+    Value valM = b.create<arith::ConstantIndexOp>(loc, 8);
+    // s0 - W
+    // s1 - N
+    // s2 - M
+    // d0 - X
+    // d1 - Y
+
+    AffineExpr sTileX, sTileY, sW, sN, sM, dX, dY;
+    bindDims(b.getContext(), dY, dX);
+    bindSymbols(b.getContext(), sTileY, sTileX, sW, sN, sM);
+    // Change loop to avoid div
+    AffineExpr W = sW.floorDiv(sTileX);
+    AffineExpr tileSize = sN * sM;
+    AffineExpr index = (W * dY.floorDiv(sTileY) + dX.floorDiv(sTileX));
+
+    AffineExpr tileIndex = index.floorDiv(tileSize);
+    AffineExpr indexInTile = index % tileSize;
+    AffineExpr x = (tileIndex * sN + indexInTile % sN) % W;
+    AffineExpr y = (tileIndex * sN + indexInTile % sN).floorDiv(W) * sM +
+                   indexInTile.floorDiv(sN);
+    // AffineExpr y = (tileIndex*sN+indexInTile%sN +
+    // indexInTile.floorDiv(sN)).floorDiv(W)*sM + indexInTile.floorDiv(sN);
+    // AffineExpr y = (tileIndex*sN+indexInTile%sN).floorDiv(W)*sM +
+    // indexInTile.floorDiv(sN);
+
+    // AffineExpr x = index % W;
+    // AffineExpr y = index.floorDiv(W);
+
+    AffineExpr x_raw = x * sTileX;
+    AffineExpr y_raw = y * sTileY;
+
+    SmallVector<OpFoldResult> operands = {
+        ids[0], ids[1], steps[0], steps[1], loopRanges[1].size, valN, valM};
+    AffineMap map = AffineMap::get(/*numDims=*/2, /*numSymbols=*/5,
+                                   {y_raw, x_raw}, b.getContext());
+    auto results =
+        affine::makeComposedFoldedMultiResultAffineApply(b, loc, map, operands);
+
+    Value xVal = getValueOrCreateConstantIndexOp(b, loc, results[0]);
+
+    Value yVal = getValueOrCreateConstantIndexOp(b, loc, results[1]);
+
+    // // Value nbCusVal = b.create<arith::ConstantIndexOp>(loc, getNbCus());
+    // // Value nbXCDs = b.create<arith::ConstantIndexOp>(loc, getNbXcds());
+    // // Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
+    // // Value cond = getCondition(b, loc, ubs, steps, nbXCDs, nbCusVal);
+    // // out.push_back(b.create<mlir::arith::SelectOp>(loc, cond, ids[0],
+    // ids[1]));
+    // // out.push_back(b.create<mlir::arith::SelectOp>(loc, cond, ids[1],
+    // ids[0]));
+    out.push_back(xVal);
+    out.push_back(yVal);
   } else {
     out = ids;
   }
@@ -2030,6 +2079,5 @@ DynamicTransposeAttr::verify(function_ref<InFlightDiagnostic()> emitError,
   }
   return success();
 }
-
 
 } // namespace mlir::iree_compiler::IREE::GPU
