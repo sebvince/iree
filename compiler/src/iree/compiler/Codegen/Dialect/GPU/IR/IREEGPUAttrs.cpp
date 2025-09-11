@@ -27,6 +27,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Utils/IndexingUtils.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -1941,37 +1942,102 @@ getloopBounds(ArrayRef<Range> loopRanges, ArrayRef<OpFoldResult> tileSizes) {
 /// ping pong matmul pattern. Tiles are distributed to XCDs in a round-robin
 /// fashion. NumLoadsX = MIN(ceildiv(X/TILE_SIZE_X),NB_XCD),NB_CUs) NumLoadsY =
 /// ceildiv(NB_CUs/NB_X) NumLoads = NumLoadsX + NumLoadsY
-static Value computeNumTileLoads(OpBuilder &b, Location loc, OpFoldResult size,
-                                 OpFoldResult tile, OpFoldResult nbXcds) {
-  AffineExpr s0, s1, s2;
-  bindSymbols(b.getContext(), s0, s1, s2);
-  AffineExpr nbLoadsExpr = (s0).floorDiv(s1).ceilDiv(s2);
+// static Value computeNumTileLoads(OpBuilder &b, Location loc, OpFoldResult
+// size,
+//                                  OpFoldResult tile, OpFoldResult nbXcds) {
+//   AffineExpr s0, s1, s2;
+//   bindSymbols(b.getContext(), s0, s1, s2);
+//   AffineExpr nbLoadsExpr = (s0).floorDiv(s1).ceilDiv(s2);
 
-  return getValueOrCreateConstantIndexOp(
-      b, loc,
-      affine::makeComposedFoldedAffineApply(b, loc, nbLoadsExpr,
-                                            {size, tile, nbXcds}));
+//   return getValueOrCreateConstantIndexOp(
+//       b, loc,
+//       affine::makeComposedFoldedAffineApply(b, loc, nbLoadsExpr,
+//                                             {size, tile, nbXcds}));
+// }
+
+static Value computeTrailingZeros(OpBuilder &b, Location loc, Value a) {
+  return b.create<mlir::math::CountTrailingZerosOp>(loc, a);
 }
 
-/// Computes the total number of Tile loads per iteration for the pingpong
-/// matmul kernel.
+static Value computeGCD(OpBuilder &b, Location loc, Value a) {
+  unsigned bitWidth = a.getType().getIntOrFloatBitWidth();
+  // Check if a is even: (a & 1) == 0
+  Value one = b.create<arith::ConstantIntOp>(loc, 1, bitWidth);
+  Value aAndOne = b.create<arith::AndIOp>(loc, a, one);
+  Value isOdd =
+      b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, aAndOne, one);
+
+  // Compute trailing zeros in a
+  Value tz = computeTrailingZeros(b, loc, a);
+
+  // Clamp trailing zeros to max 3 (since 8 = 2^3)
+  Value three = b.create<arith::ConstantIntOp>(loc, 3, bitWidth);
+  Value tzClamped = b.create<arith::MinSIOp>(loc, tz, three);
+
+  // Compute gcd: if a is even, gcd(a,8) = 1 << tzClamped; else gcd(a,8) = 1
+  Value oneResult = b.create<arith::ConstantIntOp>(loc, 1, bitWidth);
+  Value gcdEven = b.create<arith::ShLIOp>(loc, oneResult, tzClamped);
+
+  // Select result based on parity
+  Value result = b.create<arith::SelectOp>(loc, isOdd, one, gcdEven);
+  return result;
+}
+
+static Value computeNbTiles(OpBuilder &b, Location loc, OpFoldResult size,
+                            OpFoldResult tileSize) {
+  Value sizeVal = getValueOrCreateConstantIntOp(b, loc, size);
+  Value tileSizeVal = getValueOrCreateConstantIntOp(b, loc, tileSize);
+  auto nbTiles =
+      b.create<mlir::arith::DivUIOp>(loc, sizeVal, tileSizeVal).getResult();
+  return getValueOrCreateConstantIntOp(b, loc, nbTiles);
+}
+/// Computes the number of Tile loads per XCD per iteration for the pingpong
+/// matmul kernel. This is defined as MIN(NB_TILES/GCD(NB_TILES,NB_XCDs),NB_CUs)
 static Value computeNumTileLoadsPerXCD(OpBuilder &b, Location loc,
                                        OpFoldResult size, OpFoldResult tileSize,
                                        Value nbXcds, Value nbCus) {
-  Value nbX = computeNumTileLoads(b, loc, size, tileSize, nbXcds);
+  Value nbTiles = computeNbTiles(b, loc, size, tileSize);
+  Value gcd = computeGCD(b, loc, nbTiles);
+  auto nbX = b.create<mlir::arith::DivUIOp>(loc, nbTiles, gcd).getResult();
   auto nbXClamped =
       b.create<mlir::arith::MinUIOp>(loc, nbX, nbXcds).getResult();
-  auto nbY = b.create<mlir::arith::DivUIOp>(loc, nbCus, nbXClamped);
+
+  // AffineExpr s0, s1;
+  // bindSymbols(b.getContext(), s0, s1);
+  // AffineExpr ceilDivExpr = s0.ceilDiv(s1);
+  // getValueOrCreateConstantIndexOp(
+  //     b, loc,
+  //     affine::makeComposedFoldedAffineApply(b, loc, ceilDivExpr,
+  //                                           {nbCus, nbXClamped}));
+
+  auto nbY = b.create<mlir::arith::CeilDivUIOp>(loc, nbCus, nbXClamped);
+  return getValueOrCreateConstantIndexOp(
+      b, loc, b.create<mlir::arith::AddIOp>(loc, nbXClamped, nbY).getResult());
+}
+
+static Value computeNumTileLoads(OpBuilder &b, Location loc, OpFoldResult size,
+                                 OpFoldResult tileSize, Value nbXcds,
+                                 Value nbCus) {
+
+  Value nbTiles = computeNbTiles(b, loc, size, tileSize);
+  auto totalCus = b.create<mlir::arith::MulIOp>(loc, nbXcds, nbCus);
+  auto nbX = b.create<mlir::arith::MinUIOp>(loc, nbTiles, totalCus).getResult();
+
+  auto nbY = b.create<mlir::arith::CeilDivUIOp>(loc, totalCus, nbX);
+
   return getValueOrCreateConstantIndexOp(
       b, loc, b.create<mlir::arith::AddIOp>(loc, nbX, nbY).getResult());
 }
 
-/// Computes condition on using transposed workgroup reordering. We pick the
-/// solution where the number of Tile loads is minimal.
-static Value getCondition(OpBuilder &b, Location loc,
-                          ArrayRef<OpFoldResult> ubs,
-                          ArrayRef<OpFoldResult> steps, Value nbXcds,
-                          Value nbCus) {
+/// Computes condition on using transposed workgroup reordering. Transpose
+/// Reordering is applied if :
+///  - L2 Hit rate per XCD is greater. This value is proportional to the number
+///  of Tile Loads per XCD.
+///  - Overall number of Tile Loads is smaller (accross all XCDs)
+static Value getConditionL2HitRate(OpBuilder &b, Location loc,
+                                   ArrayRef<OpFoldResult> ubs,
+                                   ArrayRef<OpFoldResult> steps, Value nbXcds,
+                                   Value nbCus) {
   assert(ubs.size() == 2 && steps.size() == 2 && "rank must be 2");
   Value defaultOrder =
       computeNumTileLoadsPerXCD(b, loc, ubs[0], steps[0], nbXcds, nbCus);
@@ -1981,6 +2047,33 @@ static Value getCondition(OpBuilder &b, Location loc,
       loc, mlir::arith::CmpIPredicate::ugt, defaultOrder, transposedOrder);
   return cond;
 }
+
+static Value getConditionNumTotalLoads(OpBuilder &b, Location loc,
+                                       ArrayRef<OpFoldResult> ubs,
+                                       ArrayRef<OpFoldResult> steps,
+                                       Value nbXcds, Value nbCus) {
+  assert(ubs.size() == 2 && steps.size() == 2 && "rank must be 2");
+  Value defaultOrder =
+      computeNumTileLoads(b, loc, ubs[0], steps[0], nbXcds, nbCus);
+  Value transposedOrder =
+      computeNumTileLoads(b, loc, ubs[1], steps[1], nbXcds, nbCus);
+  Value cond = b.create<mlir::arith::CmpIOp>(
+      loc, mlir::arith::CmpIPredicate::ugt, defaultOrder, transposedOrder);
+  return cond;
+}
+
+static Value getCondition(OpBuilder &b, Location loc,
+                          ArrayRef<OpFoldResult> ubs,
+                          ArrayRef<OpFoldResult> steps, Value nbXcds,
+                          Value nbCus) {
+  Value condL2HitRate =
+      getConditionL2HitRate(b, loc, ubs, steps, nbXcds, nbCus);
+  Value condTotalLoads =
+      getConditionNumTotalLoads(b, loc, ubs, steps, nbXcds, nbCus);
+
+  return b.create<mlir::arith::AndIOp>(loc, condL2HitRate, condTotalLoads);
+}
+
 SmallVector<Range> DynamicTransposeAttr::generateLoopBounds(
     OpBuilder &b, Location loc, ArrayRef<Range> loopRanges,
     ArrayRef<OpFoldResult> tileSizes) const {
@@ -2030,6 +2123,5 @@ DynamicTransposeAttr::verify(function_ref<InFlightDiagnostic()> emitError,
   }
   return success();
 }
-
 
 } // namespace mlir::iree_compiler::IREE::GPU
