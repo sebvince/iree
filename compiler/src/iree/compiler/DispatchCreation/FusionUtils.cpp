@@ -11,6 +11,7 @@
 #include "compiler/src/iree/compiler/Dialect/Flow/Transforms/RegionOpUtils.h"
 #include "iree/compiler/Dialect/Flow/IR/FlowOps.h"
 #include "iree/compiler/Dialect/LinalgExt/Utils/Utils.h"
+#include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 
@@ -78,9 +79,16 @@ bool areFusableAsElementwiseOps(MLIRContext *context, OpOperand *fusedOperand,
 
   if (!options.fuseTruncateOps &&
       IREE::LinalgExt::isBitTruncateOp(producerOp)) {
+    // llvm::outs() << "------------\n";
+    // llvm::outs() << "Producer : \n";
+    // llvm::outs() << *producerOp << "\n";
+    // llvm::outs() << "Consumer : \n";
+    // llvm::outs() << *consumerOp << "\n";
+
     // TODO(IanWood1): do this regardless of `options.fuseTruncateOps`.
     // Never fuse truncate -> extend.
     if (IREE::LinalgExt::isBitExtendOp(consumerOp)) {
+      // llvm::outs() << "isBitExtendOp : False" << "\n";
       return false;
     }
     // Do not fuse with bit-truncate-like operations with their consumers
@@ -95,7 +103,15 @@ bool areFusableAsElementwiseOps(MLIRContext *context, OpOperand *fusedOperand,
     bool isUnaryElementwise = linalgConsumerOp.getNumLoops() ==
                                   linalgConsumerOp.getNumParallelLoops() &&
                               linalgConsumerOp.getNumDpsInputs() == 1;
-    if (!IREE::LinalgExt::isBitTruncateOp(consumerOp) && !isUnaryElementwise) {
+    // llvm::outs() << "isBitTruncateOp " <<
+    // IREE::LinalgExt::isBitTruncateOp(consumerOp) << "\n"; llvm::outs() <<
+    // "isUnaryElementwise " << isUnaryElementwise << "\n";
+    // if (!IREE::LinalgExt::isBitTruncateOp(consumerOp) && !isUnaryElementwise)
+    // {
+    if (!isUnaryElementwise) {
+      // llvm::outs() << "isBitTruncateOp " <<
+      // IREE::LinalgExt::isBitTruncateOp(consumerOp) << "\n"; llvm::outs() <<
+      // "isUnaryElementwise " << isUnaryElementwise << "\n";
       return false;
     }
   }
