@@ -352,8 +352,17 @@ util.func private @pingpong_medium_f16_expanded(%lhs_base: !mexp_in_ty, %rhs_bas
 
         rocdl.sched.barrier 0
         //LDS loads
-        %lhs_vec_1_0 = vector.transfer_read %lhs_shared_expand[%m_outer_id, %ids#3, %c1, %inner_id], %cst {in_bounds = [true, true, true, true]} : !mshared_exp, vector<2x1x1x4xf16>
-        %lhs_vec_1_1 = vector.transfer_read %lhs_shared_expand[%m_outer_id_2, %ids#3, %c1, %inner_id], %cst {in_bounds = [true, true, true, true]} : !mshared_exp, vector<2x1x1x4xf16>
+        %lhs_vec_1 = vector.transfer_read %lhs_shared_expand[%m_outer_id, %ids#3, %c1, %inner_id], %cst {in_bounds = [true, true, true, true]} : !mshared_exp, vector<4x1x1x4xf16>
+
+        //Split c1 lhs values in 3 parts.
+        %lhs_vec_1_r0 = vector.extract_strided_slice %lhs_vec_1
+        {offsets = [0, 0, 0, 0], sizes = [2, 1, 1, 4], strides = [1, 1, 1, 1]}: vector<4x1x1x4xf16> to vector<2x1x1x4xf16>
+
+        %lhs_vec_1_r10 = vector.extract_strided_slice %lhs_vec_1
+        {offsets = [2, 0, 0, 0], sizes = [1, 1, 1, 4], strides = [1, 1, 1, 1]}: vector<4x1x1x4xf16> to vector<1x1x1x4xf16>
+
+        %lhs_vec_1_r11 = vector.extract_strided_slice %lhs_vec_1
+        {offsets = [3, 0, 0, 0], sizes = [1, 1, 1, 4], strides = [1, 1, 1, 1]}: vector<4x1x1x4xf16> to vector<1x1x1x4xf16>
 
         %rhs_thread_2 = tensor.extract_slice %rhs_block [%glb2, %gko] [1, 8] [1, 1] : !block_in to tensor<1x8xf16>
         %rhs_vec_local_2 = vector.transfer_read %rhs_thread_2 [%c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x8xf16>, vector<1x8xf16>
@@ -362,6 +371,12 @@ util.func private @pingpong_medium_f16_expanded(%lhs_base: !mexp_in_ty, %rhs_bas
         %rhs_vec_local_3 = vector.transfer_read %rhs_thread_3 [%c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x8xf16>, vector<1x8xf16>
 
         %rhs_vec_1 = vector.transfer_read %rhs_shared_expand[%n_outer_id, %ids#3, %c1, %inner_id], %cst {in_bounds = [true, true, true, true]} : !shared_exp, vector<4x1x1x4xf16>
+
+        %rhs_vec_1_c0 = vector.extract_strided_slice %rhs_vec_1
+        {offsets = [0, 0, 0, 0], sizes = [2, 1, 1, 4], strides = [1, 1, 1, 1]}: vector<4x1x1x4xf16> to vector<2x1x1x4xf16>
+
+        %rhs_vec_1_c1 = vector.extract_strided_slice %rhs_vec_1
+        {offsets = [2, 0, 0, 0], sizes = [2, 1, 1, 4], strides = [1, 1, 1, 1]}: vector<4x1x1x4xf16> to vector<2x1x1x4xf16>
 
         // rocdl.sched.barrier 0
         //Global loads of lhs.
@@ -391,14 +406,23 @@ util.func private @pingpong_medium_f16_expanded(%lhs_base: !mexp_in_ty, %rhs_bas
             kind = #iree_gpu.mma_layout<MFMA_F32_16x16x16_F16, col_major = true>
           } : vector<4x1x1x4xf16>, vector<4x1x1x4xf16> into vector<4x4x1x4xf32>
 
-        %dot0_slice_0 = vector.extract_strided_slice %dot0
+        %dot0_r0 = vector.extract_strided_slice %dot0
         {offsets = [0, 0, 0, 0], sizes = [2, 4, 1, 4], strides = [1, 1, 1, 1]}: vector<4x4x1x4xf32> to vector<2x4x1x4xf32>
 
-        %dot1_0 = iree_codegen.inner_tiled ins(%lhs_vec_1_0, %rhs_vec_1) outs(%dot0_slice_0) {
+        %dot0_r11c0 = vector.extract_strided_slice %dot0
+        {offsets = [3, 0, 0, 0], sizes = [1, 2, 1, 4], strides = [1, 1, 1, 1]}: vector<4x4x1x4xf32> to vector<1x2x1x4xf32>
+
+        %dot1_r0 = iree_codegen.inner_tiled ins(%lhs_vec_1_r0, %rhs_vec_1) outs(%dot0_r0) {
             indexing_maps = #contraction_accesses,
             iterator_types = [#linalg.iterator_type<parallel>, #linalg.iterator_type<parallel>, #linalg.iterator_type<reduction>],
             kind = #iree_gpu.mma_layout<MFMA_F32_16x16x16_F16, col_major = true>
           } : vector<2x1x1x4xf16>, vector<4x1x1x4xf16> into vector<2x4x1x4xf32>
+
+        %dot1_r11c0 = iree_codegen.inner_tiled ins(%lhs_vec_1_r11, %rhs_vec_1_c0) outs(%dot0_r11c0) {
+            indexing_maps = #contraction_accesses,
+            iterator_types = [#linalg.iterator_type<parallel>, #linalg.iterator_type<parallel>, #linalg.iterator_type<reduction>],
+            kind = #iree_gpu.mma_layout<MFMA_F32_16x16x16_F16, col_major = true>
+          } : vector<1x1x1x4xf16>, vector<2x1x1x4xf16> into vector<1x2x1x4xf32>
 
         rocdl.sched.barrier 0
         gpu.barrier
@@ -424,27 +448,42 @@ util.func private @pingpong_medium_f16_expanded(%lhs_base: !mexp_in_ty, %rhs_bas
         rocdl.sched.barrier 0
         rocdl.s.setprio 1 { iree_gpu.swap_mfma = 1 }
 
-        %dot0_slice_1 = vector.extract_strided_slice %dot0
-        {offsets = [2, 0, 0, 0], sizes = [2, 4, 1, 4], strides = [1, 1, 1, 1]}: vector<4x4x1x4xf32> to vector<2x4x1x4xf32>
+        %dot0_r11c1 = vector.extract_strided_slice %dot0
+        {offsets = [3, 2, 0, 0], sizes = [1, 2, 1, 4], strides = [1, 1, 1, 1]}: vector<4x4x1x4xf32> to vector<1x2x1x4xf32>
 
-         %dot1_1 = iree_codegen.inner_tiled ins(%lhs_vec_1_1, %rhs_vec_1) outs(%dot0_slice_1) {
+        %dot1_r11c1 = iree_codegen.inner_tiled ins(%lhs_vec_1_r11, %rhs_vec_1_c1) outs(%dot0_r11c1) {
             indexing_maps = #contraction_accesses,
             iterator_types = [#linalg.iterator_type<parallel>, #linalg.iterator_type<parallel>, #linalg.iterator_type<reduction>],
             kind = #iree_gpu.mma_layout<MFMA_F32_16x16x16_F16, col_major = true>
-          } : vector<2x1x1x4xf16>, vector<4x1x1x4xf16> into vector<2x4x1x4xf32>
+          } : vector<1x1x1x4xf16>, vector<2x1x1x4xf16> into vector<1x2x1x4xf32>
 
+        %dot0_r10 = vector.extract_strided_slice %dot0
+        {offsets = [2, 0, 0, 0], sizes = [1, 4, 1, 4], strides = [1, 1, 1, 1]}: vector<4x4x1x4xf32> to vector<1x4x1x4xf32>
+
+        %dot1_r10 = iree_codegen.inner_tiled ins(%lhs_vec_1_r10, %rhs_vec_1) outs(%dot0_r10) {
+            indexing_maps = #contraction_accesses,
+            iterator_types = [#linalg.iterator_type<parallel>, #linalg.iterator_type<parallel>, #linalg.iterator_type<reduction>],
+            kind = #iree_gpu.mma_layout<MFMA_F32_16x16x16_F16, col_major = true>
+          } : vector<1x1x1x4xf16>, vector<4x1x1x4xf16> into vector<1x4x1x4xf32>
 
         %concat_init = arith.constant dense<0.0> : vector<4x4x1x4xf32>
-        %concat_0 = vector.insert_strided_slice %dot1_0, %concat_init
+        %concat_0 = vector.insert_strided_slice %dot1_r0, %concat_init
             {offsets = [0, 0, 0, 0], strides = [1, 1, 1, 1]}
             : vector<2x4x1x4xf32> into vector<4x4x1x4xf32>
 
-        %concat = vector.insert_strided_slice %dot1_1, %concat_0
+        %concat_1 = vector.insert_strided_slice %dot1_r10, %concat_0
             {offsets = [2, 0, 0, 0], strides = [1, 1, 1, 1]}
-            : vector<2x4x1x4xf32> into vector<4x4x1x4xf32>
+            : vector<1x4x1x4xf32> into vector<4x4x1x4xf32>
 
+        %concat_2 = vector.insert_strided_slice %dot1_r11c0, %concat_1
+            {offsets = [3, 0, 0, 0], strides = [1, 1, 1, 1]}
+            : vector<1x2x1x4xf32> into vector<4x4x1x4xf32>
 
-        %dot2 = iree_codegen.inner_tiled ins(%lhs_vec_2, %rhs_vec_2) outs(%concat) {
+        %dot1 = vector.insert_strided_slice %dot1_r11c1, %concat_2
+            {offsets = [3, 2, 0, 0], strides = [1, 1, 1, 1]}
+            : vector<1x2x1x4xf32> into vector<4x4x1x4xf32>
+
+        %dot2 = iree_codegen.inner_tiled ins(%lhs_vec_2, %rhs_vec_2) outs(%dot1) {
             indexing_maps = #contraction_accesses,
             iterator_types = [#linalg.iterator_type<parallel>, #linalg.iterator_type<parallel>, #linalg.iterator_type<reduction>],
             kind = #iree_gpu.mma_layout<MFMA_F32_16x16x16_F16, col_major = true>
@@ -506,19 +545,6 @@ util.func private @pingpong_medium_f16_expanded(%lhs_base: !mexp_in_ty, %rhs_bas
       %lhs_thread_1_sg_0 = tensor.extract_slice %lhs_block [0, %glb1_lhs_sg_0, %gko] [1, 1, 8] [1, 1, 1] : !mexp_block_in to tensor<1x1x8xf16>
       %lhs_vec_local_1_sg_0 = vector.transfer_read %lhs_thread_1_sg_0 [%c0, %c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x1x8xf16>, vector<1x8xf16>
 
-
-      // %lhs_thread_2 = tensor.extract_slice %lhs_block [0, %glb2_lhs, %gko] [1, 1, 8] [1, 1, 1] : !mexp_block_in to tensor<1x1x8xf16>
-      // %lhs_vec_local_2 = vector.transfer_read %lhs_thread_2 [%c0, %c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x1x8xf16>, vector<1x8xf16>
-      // %lhs_thread_3 = tensor.extract_slice %lhs_block [0, %glb3_lhs, %gko] [1, 1, 8] [1, 1, 1] : !mexp_block_in to tensor<1x1x8xf16>
-      // %lhs_vec_local_3 = vector.transfer_read %lhs_thread_3 [%c0, %c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x1x8xf16>, vector<1x8xf16>
-
-      // Global loads of lhs.
-      // %lhs_block_sg_0 = tensor.extract_slice %lhs [0, 0, %i] [1, 128, 64] [1, 1, 1] : !mexp_in_ty to !mexp_block_in //TODO : remove
-      // %lhs_thread_0_sg_0 = tensor.extract_slice %lhs_block [0, %glb0_lhs_sg_0, %gko] [1, 1, 8] [1, 1, 1] : !mexp_block_in to tensor<1x1x8xf16>
-      // %lhs_vec_local_0_sg_0 = vector.transfer_read %lhs_thread_0_sg_0 [%c0, %c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x1x8xf16>, vector<1x8xf16>
-      // %lhs_thread_1_sg_0 = tensor.extract_slice %lhs_block [0, %glb1_lhs_sg_0, %gko] [1, 1, 8] [1, 1, 1] : !mexp_block_in to tensor<1x1x8xf16>
-      // %lhs_vec_local_1_sg_0 = vector.transfer_read %lhs_thread_1_sg_0 [%c0, %c0, %c0], %cst {in_bounds = [true, true]} : tensor<1x1x8xf16>, vector<1x8xf16>
-
       rocdl.sched.barrier 0
 
       %lhs_vec_2_0 = vector.transfer_read %lhs_shared_expand[%m_outer_id, %ids#3, %c2, %inner_id], %cst {in_bounds = [true, true, true, true]} : !mshared_exp, vector<2x1x1x4xf16>
@@ -566,24 +592,11 @@ util.func private @pingpong_medium_f16_expanded(%lhs_base: !mexp_in_ty, %rhs_bas
       vector.transfer_write %rhs_vec_local_2, %rhs_shared [%glb2, %gko] {in_bounds = [true, true]} : vector<1x8xf16>, !shared
       vector.transfer_write %rhs_vec_local_3, %rhs_shared [%glb3, %gko] {in_bounds = [true, true]} : vector<1x8xf16>, !shared
 
-
       // LHS
       vector.transfer_write %lhs_vec_local_0, %lhs_shared [%glb0_lhs, %gko] {in_bounds = [true, true]} : vector<1x8xf16>, !mshared
       vector.transfer_write %lhs_vec_local_1, %lhs_shared [%glb1_lhs, %gko] {in_bounds = [true, true]} : vector<1x8xf16>, !mshared
       vector.transfer_write %lhs_vec_local_0_sg_0, %lhs_shared [%glb0_lhs_sg_0, %gko] {in_bounds = [true, true]} : vector<1x8xf16>, !mshared
       vector.transfer_write %lhs_vec_local_1_sg_0, %lhs_shared [%glb1_lhs_sg_0, %gko] {in_bounds = [true, true]} : vector<1x8xf16>, !mshared
-
-      //vector.transfer_write %lhs_vec_local_0, %lhs_shared [%glb0_lhs, %gko] {in_bounds = [true, true]} : vector<1x8xf16>, !mshared
-      // vector.transfer_write %lhs_vec_local_1, %lhs_shared [%glb1_lhs, %gko] {in_bounds = [true, true]} : vector<1x8xf16>, !mshared
-
-
-
-
-      // vector.transfer_write %lhs_vec_local_2, %lhs_shared [%glb2_lhs, %gko] {in_bounds = [true, true]} : vector<1x8xf16>, !mshared
-      // vector.transfer_write %lhs_vec_local_3, %lhs_shared [%glb3_lhs, %gko] {in_bounds = [true, true]} : vector<1x8xf16>, !mshared
-      // DS write for subgroup 0
-      // vector.transfer_write %lhs_vec_local_0_sg_0, %lhs_shared [%glb0_lhs_sg_0, %gko] {in_bounds = [true, true]} : vector<1x8xf16>, !mshared
-      // vector.transfer_write %lhs_vec_local_1_sg_0, %lhs_shared [%glb1_lhs_sg_0, %gko] {in_bounds = [true, true]} : vector<1x8xf16>, !mshared
 
       rocdl.s.barrier
       rocdl.sched.barrier 0
